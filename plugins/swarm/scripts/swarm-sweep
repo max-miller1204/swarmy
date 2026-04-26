@@ -115,6 +115,13 @@ while [ "$i" -lt "${#paths[@]}" ]; do
         continue
     fi
 
+    # Clean up empty intermediate parent dirs from slashed branch names
+    # (e.g. branch `swarm/foo-wave-2-bar` → worktree at
+    # `<parent>/<repo>--swarm/foo-wave-2-bar`). rmdir -p walks up and stops at
+    # the first non-empty parent, so siblings still pending removal keep the
+    # parent alive until the last one is gone.
+    rmdir -p "$(dirname "$p")" 2>/dev/null || true
+
     if [ -n "$b" ] && git -C "$main_abs" show-ref --verify --quiet "refs/heads/$b"; then
         if ! git -C "$main_abs" branch -D "$b" >/dev/null 2>&1; then
             echo "swarm-sweep: failed to delete branch '$b'" >&2

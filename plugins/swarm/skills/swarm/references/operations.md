@@ -153,8 +153,9 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-fold-cleanup" <branch>
 
 1. Resolves the worktree path: `<parent>/<repo>--<branch>`.
 2. Runs `git worktree remove --force <path>` from the main worktree.
-3. Runs `git branch -D <branch>` from the main worktree.
-4. Lists tmux panes via `tmux list-panes -a -F "#{pane_id} #{pane_current_path}"`, filters for any pane whose path equals the worktree path or starts with `<worktree-path>/`, and kills each via `tmux kill-pane -t <pane_id>`.
+3. Runs `rmdir -p "$(dirname <path>)"` (silently — ignores failures) to clean up empty intermediate parent dirs that result from slashed branch names. Example: branch `swarm/foo-wave-2-bar` produces worktree path `<parent>/<repo>--swarm/foo-wave-2-bar`; `git worktree remove` only removes the leaf, leaving `<parent>/<repo>--swarm/` empty after the last sibling is gone. `rmdir -p` walks up and stops at the first non-empty parent, so it's safe.
+4. Runs `git branch -D <branch>` from the main worktree.
+5. Lists tmux panes via `tmux list-panes -a -F "#{pane_id} #{pane_current_path}"`, filters for any pane whose path equals the worktree path or starts with `<worktree-path>/`, and kills each via `tmux kill-pane -t <pane_id>`.
 
 The script is idempotent — if the worktree is already gone, the branch already deleted, or no panes match, it succeeds with a no-op for that step.
 
@@ -187,7 +188,7 @@ Prints one line per candidate of the form `<worktree-path> <branch>`, suitable f
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-sweep" --confirm
 ```
 
-For each candidate: `git worktree remove --force <path>` + `git branch -D <branch>`, plus the tmux pane kill (same logic as `swarm-fold-cleanup`).
+For each candidate: `git worktree remove --force <path>` + `rmdir -p "$(dirname <path>)" 2>/dev/null` (cleans up empty intermediate parent dirs from slashed branch names) + `git branch -D <branch>`, plus the tmux pane kill (same logic as `swarm-fold-cleanup`).
 
 **Filter:** matches paths under `<parent>/<repo>--*` that are not the main worktree itself.
 
