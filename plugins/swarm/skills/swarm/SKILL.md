@@ -147,7 +147,7 @@ So:
 
   bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-fold-cleanup" <branch>
   ```
-  `swarm-fold-cleanup` removes the worktree at `<parent>/<repo>--<branch>`, deletes the branch, and kills any tmux panes whose `pane_current_path` matches.
+  `swarm-fold-cleanup` removes the worktree at `<parent>/<repo>--<branch>`, cleans up empty intermediate parent dirs (relevant when branch names contain `/`, e.g. `swarm/foo-wave-2-bar` → `<repo>--swarm/foo-wave-2-bar`, leaving `<repo>--swarm/` empty after the last sibling), deletes the branch, and kills any tmux panes whose `pane_current_path` matches.
 
 **On conflict** (either the cherry-pick or `swarm-apply`'s `--3way` fallback leaves markers): stop immediately. Print the conflicted files. Resolve in the main repo (e.g. `git checkout --ours Cargo.lock && cargo check --workspace && git add Cargo.lock` for lockfile conflicts), then `git cherry-pick --continue`. **Do not advance to the next branch until the current state is clean.** Check with `git -C <main> status --porcelain`.
 

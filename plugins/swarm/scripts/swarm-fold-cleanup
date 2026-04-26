@@ -55,6 +55,14 @@ else
     git -C "$main_abs" worktree prune >/dev/null 2>&1 || true
 fi
 
+# Clean up any empty intermediate parent dirs that result from slashed branch
+# names. Example: branch `swarm/foo-wave-2-bar` produces worktree path
+# `<parent>/<repo>--swarm/foo-wave-2-bar`; `git worktree remove` only removes
+# the leaf, leaving `<parent>/<repo>--swarm/` empty after the last sibling is
+# removed. rmdir -p walks up and stops at the first non-empty parent, so it's
+# safe — sibling worktrees still under the same parent keep it alive.
+rmdir -p "$(dirname "$wt_path")" 2>/dev/null || true
+
 # Delete the branch.
 if git -C "$main_abs" show-ref --verify --quiet "refs/heads/$branch"; then
     if ! git -C "$main_abs" branch -D "$branch" >/dev/null 2>&1; then
