@@ -12,7 +12,7 @@ Never rely on the executable bit (tarball-based marketplace installs may strip i
 
 ## Worktree naming convention
 
-Worktrees live at `<parent-dir>/<repo-basename>--<branch>`. E.g. in `~/code/chatter`, branch `audio-recorder` lives at `~/code/chatter--audio-recorder`. The base path can be overridden via the `SWARMY_WORKTREE_BASE` env var; the default is the parent directory of the current repo.
+Worktrees live at `<parent-dir>/<repo-basename>--<branch>`. E.g. in `~/code/chatter`, branch `audio-recorder` lives at `~/code/chatter--audio-recorder`. The base path can be overridden via the `SWARMY_WORKTREE_BASE` env var; the default is the parent directory of the current repo. Absolute values are used as-is; relative values are resolved against the main worktree (so `SWARMY_WORKTREE_BASE=.swarmy/worktrees` produces in-repo worktrees at `<repo>/.swarmy/worktrees/<repo>--<branch>`).
 
 All scripts in this reference operate on this convention. The "main worktree" is the original clone (the one whose `git rev-parse --show-toplevel` matches the repo root); chunk worktrees are siblings under the parent dir.
 

@@ -40,7 +40,13 @@ common_dir=$(cd "$common_dir_raw" && pwd -P)
 main_abs=$(cd "$common_dir/.." && pwd -P)
 base=$(basename "$main_abs")
 parent=$(dirname "$main_abs")
-wt_base="${SWARMY_WORKTREE_BASE:-$parent}"
+wt_base_raw="${SWARMY_WORKTREE_BASE:-$parent}"
+# Relative SWARMY_WORKTREE_BASE → resolve against the main worktree
+# (enables in-repo placement like ".swarmy/worktrees"). Absolute → as-is.
+case "$wt_base_raw" in
+    /*) wt_base="$wt_base_raw" ;;
+    *)  wt_base="$main_abs/$wt_base_raw" ;;
+esac
 
 prefix="$wt_base/$base--"
 

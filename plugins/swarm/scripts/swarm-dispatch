@@ -5,6 +5,9 @@
 #   ${SWARMY_WORKTREE_BASE:-<parent-of-main-worktree>}/<repo>--<branch>
 # then spawns a tmux pane (default) or window in that worktree path.
 #
+# SWARMY_WORKTREE_BASE may be absolute (used as-is) or relative (resolved
+# against the main worktree, enabling in-repo worktrees like ".swarmy/wt").
+#
 # Prints the new tmux pane/window IDs on stdout (one per line, in the same
 # order as the input branches). The caller is responsible for any further
 # action inside the new pane/window (e.g. writing CHUNK.md and `tmux
@@ -86,7 +89,13 @@ common_dir=$(git rev-parse --git-common-dir 2>/dev/null) || {
 main_abs=$(cd "$common_dir/.." && pwd -P)
 base=$(basename "$main_abs")
 parent=$(dirname "$main_abs")
-wt_base="${SWARMY_WORKTREE_BASE:-$parent}"
+wt_base_raw="${SWARMY_WORKTREE_BASE:-$parent}"
+# Relative SWARMY_WORKTREE_BASE → resolve against the main worktree
+# (enables in-repo placement like ".swarmy/worktrees"). Absolute → as-is.
+case "$wt_base_raw" in
+    /*) wt_base="$wt_base_raw" ;;
+    *)  wt_base="$main_abs/$wt_base_raw" ;;
+esac
 
 # 1. Create or verify worktrees, silently.
 wt_paths=()
