@@ -1,0 +1,33 @@
+{
+  "name": "swarmy",
+  "owner": {
+    "name": "Max Miller",
+    "email": "maxmiller1204@gmail.com"
+  },
+  "metadata": {
+    "description": "Spec-and-swarm: write a wave-structured spec, then execute it in parallel git worktrees + tmux panes.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "spec",
+      "description": "Interview-driven SPEC.md writer with explicit waves.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Max Miller"
+      },
+      "source": "./plugins/spec",
+      "category": "development"
+    },
+    {
+      "name": "swarm",
+      "description": "Execute SPEC.md waves in parallel git worktrees and tmux panes.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Max Miller"
+      },
+      "source": "./plugins/swarm",
+      "category": "development"
+    }
+  ]
+}

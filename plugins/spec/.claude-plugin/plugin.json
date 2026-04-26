@@ -1,0 +1,9 @@
+{
+  "name": "spec",
+  "version": "0.1.0",
+  "description": "Interview-driven SPEC.md writer with explicit waves. Pairs with the swarm plugin.",
+  "author": {
+    "name": "Max Miller",
+    "email": "maxmiller1204@gmail.com"
+  }
+}

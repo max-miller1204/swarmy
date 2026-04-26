@@ -1,0 +1,9 @@
+{
+  "name": "swarm",
+  "version": "0.1.0",
+  "description": "Execute SPEC.md waves in parallel git worktrees and tmux panes. Requires git, tmux, claude CLI, bash 3.2+. macOS/Linux only.",
+  "author": {
+    "name": "Max Miller",
+    "email": "maxmiller1204@gmail.com"
+  }
+}
