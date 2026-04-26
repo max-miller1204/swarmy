@@ -113,6 +113,8 @@ Lockfile conflicts are common when parallel chunks each add deps. **General reci
 | `Gemfile.lock` | `bundle install` |
 | `mix.lock` | `mix deps.get` |
 
+**This recipe is for *derived* lockfiles only.** When the conflict is in the manifest itself (e.g. `pyproject.toml`'s `dependencies = [...]` line, `package.json`'s `dependencies` block, `Cargo.toml`'s `[dependencies]`), the manifest IS the source of truth — there's no upstream to regenerate from. `--ours` would silently drop the chunk branch's contribution and the regenerator wouldn't restore it. Resolve manifest-level conflicts by hand: edit the conflicted region to union both branches' changes, `git add <manifest>`, then `git cherry-pick --continue`. The general "stop on conflict, surface, resolve, continue" discipline still applies — just don't reach for the lockfile recipe when the conflict is in the manifest.
+
 **Use when:** folding back a swarm chunk whose agent already committed (the default case).
 
 **Worked example:**

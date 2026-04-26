@@ -119,6 +119,7 @@ Run this only after Phase 8 (fold-back) has fully completed and the working tree
 - Default branch: `git symbolic-ref refs/remotes/<upstream>/HEAD`, strip the `refs/remotes/<upstream>/` prefix. Fall back to asking.
 - Upstream slug: parse `git remote get-url <upstream>`. Both SSH (`git@github.com:owner/repo.git`) and HTTPS (`https://github.com/owner/repo.git`) forms need handling — strip the prefix and the `.git` suffix.
 - Fork owner: parse `git remote get-url <fork>` the same way. Take just the owner (the part before the `/repo`).
+- **If the URL doesn't match either GitHub form** (e.g. local path, GitLab, Bitbucket, self-hosted Gitea, SSH alias from `~/.ssh/config`), don't guess — `AskUserQuestion` for the upstream `owner/repo` slug and the fork owner separately. The Phase 8.5 `gh pr create --repo` flag and `--head <fork-owner>:<branch>` form will silently target the wrong repo if you derive these from path basenames. Once the user answers, write the resolved values back to `## Execution` (e.g. `Upstream slug: owner/repo`, `Fork owner: <login>`) so subsequent waves don't re-prompt.
 
 ### Step 3 — Confirm push and PR
 
