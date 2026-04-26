@@ -23,7 +23,7 @@ Read `$1` if given, else `./SPEC.md`. If neither exists, tell the user to run `/
 
 Look for a **Waves** section in the spec.
 
-- **If waves are present** (the primary path): scan for any `_Wave N executed …_` notes already in the spec — those waves are done. Offer the first un-executed wave via `AskUserQuestion`. Use that wave's chunks and scaffold verbatim; do not re-chunk.
+- **If waves are present** (the primary path): scan for any line matching `Wave N executed` (case-insensitive; surrounding underscores/italic markers optional, so a hand-edited annotation like `Wave 2 executed 2026-04-20: ...` still detects). Those waves are done. If exactly one wave remains un-executed, surface that choice in plain text and use it directly — no need to prompt for a single option. Otherwise offer the first un-executed wave via `AskUserQuestion`. Use the chosen wave's chunks and scaffold verbatim; do not re-chunk.
 - **If no waves section**: treat the spec as one wave. You'll need to analyze parallelizability yourself in the next phase.
 
 ### 1b — Resolve delivery mode
@@ -43,7 +43,7 @@ Then:
   - `solo` (current behavior; fold to trunk)
   - `fork` (wave branches; opt-in push/PR — see references/fork-mode.md)
 
-  After the user answers, write a minimal `## Execution` section with `Delivery mode: <answer>` back into the spec so subsequent invocations skip this question. Surface the write in plain text ("Updated SPEC.md → set Delivery mode: solo-local").
+  Hold the answer in memory for this run. **Don't write to the spec yet** — Phase 4 bundles the `## Execution` section update into the scaffold commit. Writing here would dirty the working tree right before Phase 3 verifies it's clean, and bail the run on the user's own well-meaning edit.
 
 The remaining phases are written in solo-mode terms with notes for fork mode. **Solo mode is byte-identical to the previous version of this skill.**
 
@@ -77,8 +77,9 @@ In fork mode, the next step is Phase 3.5 (create the wave branch) before scaffol
 You (the coordinator) write the scaffold files yourself. The other agents aren't running yet — this is all you.
 
 - Write the workspace/package manifest, shared types, interface contracts, stub modules for each chunk, CI.
-- Run a build check appropriate to the stack (e.g. `cargo check --workspace` for Rust, `tsc --noEmit` for TypeScript, `go build ./...` for Go). **Do not proceed if it fails.** Fix and re-check.
-- Commit with a clear message describing what contracts were locked. Example: `scaffold: lock SttEngine + LlmProvider + Recorder + … contracts`.
+- If Phase 1b resolved a delivery mode that wasn't already in the spec, append a minimal `## Execution` section to the spec now. Place it just before the first existing `##` section (typically `## Waves`); if the spec has only an H1 and no other `##` headers, append at the end.
+- Run the stack's standard build or typecheck command — whatever's fast enough to fail on a broken scaffold (`cargo check`, `tsc --noEmit`, `go build ./...`, `mypy`/`pyright`, `mvn compile -q`, `bun run typecheck`, etc.). **Do not proceed if it fails.** Fix and re-check.
+- Commit everything (scaffold + the spec's new Execution section, if any) in a single commit with a message describing what contracts were locked. Example: `scaffold: lock SttEngine + LlmProvider + Recorder + … contracts`.
 
 The scaffold commit lands on the integration branch — trunk in solo mode, the wave branch in fork mode (since Phase 3.5 already checked it out). Either way, it's load-bearing: every parallel chunk imports from it. Nail it down before dispatch.
 
@@ -88,9 +89,11 @@ In fork mode, this means trunk is **not** modified — it stays at upstream's HE
 
 Verify:
 - `$TMUX` is set (inside a tmux session)
-- The scaffold commit you just made is HEAD on the integration branch (trunk in solo mode, the wave branch in fork mode)
-- Working tree still clean
+- The scaffold commit you just made is HEAD on the integration branch (trunk in solo mode, the wave branch in fork mode). Check with `git rev-parse HEAD` and compare to the scaffold commit's SHA.
+- Working tree still clean (`git status --porcelain` empty)
 - Invoke from a fresh tmux window with a single full-window pane — the dispatch script reflows tiled layout from the current pane.
+
+If any fail, explain what's wrong and stop. Do not force state.
 
 ## Phase 6 — Dispatch
 
@@ -112,11 +115,11 @@ Three-step dispatch, in this order (avoids a race where Claude starts before its
 
 2. **Write `<worktree>/CHUNK.md`** for each chunk, using `references/chunk-template.md` as the template. Fill in: name, goal, files owned, interfaces (copy the locked signatures from the scaffold commit verbatim), done-when, out-of-scope, branch name, worktree path.
 
-3. **Launch the agents.** Using the pane IDs from step 1's stdout, send the start command to each pane:
+3. **Launch the agents.** Using the pane IDs from step 1's stdout, send the start command to each pane in turn:
    ```
    tmux send-keys -t <pane_id> 'claude "read CHUNK.md and execute it"' C-m
    ```
-   Do this per-pane, not in a loop that might race. Verify each pane got the command before moving to the next.
+   Send sequentially and verify the command landed in each pane (a quick `tmux capture-pane -p -t <pane_id> | tail -n 5` is cheap) before moving to the next. `tmux send-keys` can silently no-op if a pane closed between dispatch and send — sequencing makes the failure visible instead of letting one chunk silently never start.
 
 Report the pane/window IDs and worktree paths so the user can navigate.
 
@@ -149,7 +152,9 @@ So:
   ```
   `swarm-fold-cleanup` removes the worktree at `<parent>/<repo>--<branch>`, cleans up empty intermediate parent dirs (relevant when branch names contain `/`, e.g. `swarm/foo-wave-2-bar` → `<repo>--swarm/foo-wave-2-bar`, leaving `<repo>--swarm/` empty after the last sibling), deletes the branch, and kills any tmux panes whose `pane_current_path` matches.
 
-**On conflict** (either the cherry-pick or `swarm-apply`'s `--3way` fallback leaves markers): stop immediately. Print the conflicted files. Resolve in the main repo (e.g. `git checkout --ours Cargo.lock && cargo check --workspace && git add Cargo.lock` for lockfile conflicts), then `git cherry-pick --continue`. **Do not advance to the next branch until the current state is clean.** Check with `git -C <main> status --porcelain`.
+**On conflict** (either the cherry-pick or `swarm-apply`'s `--3way` fallback leaves markers): stop immediately. Print the conflicted files. Resolve in the main repo, then `git cherry-pick --continue`. Lockfile conflicts (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `bun.lockb`, `go.sum`, `uv.lock`, `poetry.lock`, `Gemfile.lock`, etc.) are common when parallel chunks each add deps — see `references/operations.md` → `swarm-cherry-pick` conflict semantics for the standard recipe. **Do not advance to the next branch until the current state is clean.** Check with `git -C <main> status --porcelain`.
+
+**If a chunk's pane was closed before fold-back** (the user accidentally killed it, or tmux exited), the branch and worktree still exist — `swarm-cherry-pick <branch>` and `swarm-fold-cleanup <branch>` work the same way. The pane-kill step inside `swarm-fold-cleanup` is a no-op when no panes match.
 
 In fork mode, after Phase 8 completes successfully, continue to Phase 8.5 (push and open PR) — see `references/fork-mode.md`. In solo mode, skip Phase 8.5 and go straight to Phase 9.
 
@@ -185,6 +190,8 @@ Append a one-line note to the spec file. The format depends on delivery mode:
   ```
 
 Use today's date (from the environment context). This is per-run history — on the next `/swarm` invocation, this note is how you know which wave to offer next.
+
+**Commit the annotation** (e.g. `chore: record wave N`). Leaving the spec edit uncommitted dirties the working tree, which breaks the next `/swarm` invocation's Phase 3 cleanliness check on the same repo. In solo mode the commit lands on trunk alongside the cherry-picked chunk commits. In fork mode it lands on the wave branch after Phase 8.5 has already pushed — so this commit is local-only unless the user pushes the wave branch again to update the PR description's history. That's fine; the PR's diff is unaffected.
 
 The annotation lives at the bottom of the spec, **not** inside the `## Execution` section. Execution captures durable preferences; annotations capture per-run history. Don't conflate them.
 
