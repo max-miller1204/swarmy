@@ -5,3 +5,6 @@
 .idea/
 .vscode/
 node_modules/
+
+# Local agent worktrees and Claude Code session state
+.claude/
