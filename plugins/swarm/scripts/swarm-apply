@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# swarm-apply — apply uncommitted diff + untracked files from a worktree
+# branch into the main (integration) worktree.
+#
+# Source-worktree resolution mirrors swarm-cherry-pick:
+#   - If <branch> is given, source = ${SWARMY_WORKTREE_BASE:-<parent>}/<repo>--<branch>
+#   - If no arg and called from a non-main worktree, source = pwd -P
+#
+# Tracked changes (working tree + index, vs HEAD) are piped through
+# `git apply --index`; on failure, falls back to `git apply --3way`.
+# Untracked files (per `ls-files --others --exclude-standard`) are copied
+# verbatim, creating parent dirs as needed.
+#
+# Replaces the fish helper `gwa`.
+#
+# Usage: swarm-apply [<branch>]
+
+set -euo pipefail
+
+: "${CLAUDE_PLUGIN_ROOT:=$(cd "$(dirname "$0")/.." && pwd)}"
+
+usage() {
+    echo "Usage: swarm-apply [<branch>]" >&2
+    exit 1
+}
+
+case "${1:-}" in
+    -h|--help) usage ;;
+esac
+
+common_dir_raw=$(git rev-parse --git-common-dir 2>/dev/null) || {
+    echo "swarm-apply: not inside a git repository" >&2
+    exit 1
+}
+common_dir=$(cd "$common_dir_raw" && pwd -P)
+main_abs=$(cd "$common_dir/.." && pwd -P)
+base=$(basename "$main_abs")
+parent=$(dirname "$main_abs")
+wt_base="${SWARMY_WORKTREE_BASE:-$parent}"
+
+source_abs=""
+if [ $# -gt 0 ] && [ -n "$1" ]; then
+    branch="$1"
+    source_abs="$wt_base/$base--$branch"
+    if [ ! -d "$source_abs" ]; then
+        echo "swarm-apply: no worktree found at $source_abs" >&2
+        exit 1
+    fi
+else
+    git_dir_raw=$(git rev-parse --git-dir 2>/dev/null) || exit 1
+    resolved_git_dir=$(cd "$git_dir_raw" && pwd -P)
+    if [ "$resolved_git_dir" = "$common_dir" ]; then
+        echo "swarm-apply: already in the main worktree; pass a branch name to apply a worktree" >&2
+        exit 1
+    fi
+    source_abs=$(pwd -P)
+fi
+
+# Detect tracked changes (vs HEAD; includes both index and working tree).
+tracked_changes=$(git -C "$source_abs" diff HEAD --name-only; git -C "$source_abs" diff --cached --name-only)
+untracked=$(git -C "$source_abs" ls-files --others --exclude-standard)
+
+if [ -z "$tracked_changes" ] && [ -z "$untracked" ]; then
+    echo "Nothing to apply."
+    exit 0
+fi
+
+# Apply tracked diff. set -e suspended inside `if`; pipefail too.
+if [ -n "$tracked_changes" ]; then
+    if ! git -C "$source_abs" diff HEAD | git -C "$main_abs" apply --index - 2>/dev/null; then
+        if ! git -C "$source_abs" diff HEAD | git -C "$main_abs" apply --3way -; then
+            echo "swarm-apply: failed to apply tracked diff (even with --3way)" >&2
+            exit 1
+        fi
+    fi
+fi
+
+# Copy untracked files.
+if [ -n "$untracked" ]; then
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        dest="$main_abs/$f"
+        mkdir -p "$(dirname "$dest")"
+        cp "$source_abs/$f" "$dest"
+    done <<EOF
+$untracked
+EOF
+fi
+
+git -C "$main_abs" status --short
+echo "Applied to $main_abs"

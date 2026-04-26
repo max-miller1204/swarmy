@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# swarm-doctor — preflight checks for the swarm plugin.
+#
+# Verifies that required tools are on PATH (git, tmux, claude, bash >= 3.2),
+# that the current shell is inside a tmux session, and that the working
+# directory is inside a git repository. Optional: warns if `gh` is missing
+# (used for fork-PR mode but not strictly required).
+#
+# Exits 0 if all required checks pass, non-zero otherwise.
+# Prints one line per check: "[OK] <name>" or "[FAIL] <name>" (or "[WARN]").
+#
+# This script is new; it has no fish counterpart.
+
+set -euo pipefail
+
+: "${CLAUDE_PLUGIN_ROOT:=$(cd "$(dirname "$0")/.." && pwd)}"
+
+# Color helpers (only when stdout is a TTY).
+if [ -t 1 ]; then
+    GREEN='\033[0;32m'
+    RED='\033[0;31m'
+    YELLOW='\033[0;33m'
+    RESET='\033[0m'
+else
+    GREEN=''
+    RED=''
+    YELLOW=''
+    RESET=''
+fi
+
+failures=0
+
+ok() {
+    printf '%b[OK]%b   %s\n' "$GREEN" "$RESET" "$1"
+}
+
+fail() {
+    printf '%b[FAIL]%b %s\n' "$RED" "$RESET" "$1"
+    failures=$((failures + 1))
+}
+
+warn() {
+    printf '%b[WARN]%b %s\n' "$YELLOW" "$RESET" "$1"
+}
+
+# 1. git on PATH
+if command -v git >/dev/null 2>&1; then
+    ok "git on PATH ($(command -v git))"
+else
+    fail "git on PATH"
+fi
+
+# 2. tmux on PATH
+if command -v tmux >/dev/null 2>&1; then
+    ok "tmux on PATH ($(command -v tmux))"
+else
+    fail "tmux on PATH"
+fi
+
+# 3. claude on PATH
+if command -v claude >/dev/null 2>&1; then
+    ok "claude on PATH ($(command -v claude))"
+else
+    fail "claude on PATH"
+fi
+
+# 4. bash >= 3.2 (look at $BASH_VERSION, e.g. "3.2.57(1)-release")
+bash_ver="${BASH_VERSION:-}"
+if [ -n "$bash_ver" ]; then
+    bash_major="${bash_ver%%.*}"
+    rest="${bash_ver#*.}"
+    bash_minor="${rest%%.*}"
+    # numeric compare; treat non-numeric as 0 by stripping non-digits
+    case "$bash_major" in
+        ''|*[!0-9]*) bash_major=0 ;;
+    esac
+    case "$bash_minor" in
+        ''|*[!0-9]*) bash_minor=0 ;;
+    esac
+    if [ "$bash_major" -gt 3 ] || { [ "$bash_major" -eq 3 ] && [ "$bash_minor" -ge 2 ]; }; then
+        ok "bash >= 3.2 (running $bash_ver)"
+    else
+        fail "bash >= 3.2 (running $bash_ver)"
+    fi
+else
+    fail "bash >= 3.2 (\$BASH_VERSION not set)"
+fi
+
+# 5. $TMUX set (i.e. running inside a tmux session)
+if [ -n "${TMUX:-}" ]; then
+    ok "\$TMUX set (inside a tmux session)"
+else
+    fail "\$TMUX set (run swarm from inside a tmux session)"
+fi
+
+# 6. inside a git repo
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    ok "inside a git repository ($(git rev-parse --show-toplevel 2>/dev/null || echo unknown))"
+else
+    fail "inside a git repository"
+fi
+
+# Optional: gh for fork-PR mode
+if command -v gh >/dev/null 2>&1; then
+    ok "gh on PATH ($(command -v gh)) — fork-PR mode available"
+else
+    warn "gh not on PATH — fork-PR mode unavailable (optional)"
+fi
+
+if [ "$failures" -gt 0 ]; then
+    printf '\n%b%d check(s) failed.%b See README prerequisites.\n' "$RED" "$failures" "$RESET" >&2
+    exit 1
+fi
+
+printf '\nAll required checks passed.\n'
+exit 0

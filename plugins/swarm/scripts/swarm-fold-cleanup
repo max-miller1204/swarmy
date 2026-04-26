@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# swarm-fold-cleanup — remove a single swarm worktree, branch, and panes.
+#
+# Given a branch, computes the worktree path
+# (${SWARMY_WORKTREE_BASE:-<parent>}/<repo>--<branch>), runs
+# `git worktree remove --force`, deletes the branch (-D), then kills any
+# tmux panes whose pane_current_path equals (or descends from) the
+# removed worktree path.
+#
+# If $TMUX is unset, the pane-killing step is skipped silently.
+#
+# Replaces the inlined "remove worktree + branch + kill panes" block in
+# the current /swarm SKILL (the gwf substitute pattern).
+#
+# Usage: swarm-fold-cleanup <branch>
+
+set -euo pipefail
+
+: "${CLAUDE_PLUGIN_ROOT:=$(cd "$(dirname "$0")/.." && pwd)}"
+
+usage() {
+    echo "Usage: swarm-fold-cleanup <branch>" >&2
+    exit 1
+}
+
+if [ $# -lt 1 ] || [ -z "${1:-}" ]; then
+    usage
+fi
+case "$1" in
+    -h|--help) usage ;;
+esac
+
+branch="$1"
+
+common_dir_raw=$(git rev-parse --git-common-dir 2>/dev/null) || {
+    echo "swarm-fold-cleanup: not inside a git repository" >&2
+    exit 1
+}
+common_dir=$(cd "$common_dir_raw" && pwd -P)
+main_abs=$(cd "$common_dir/.." && pwd -P)
+base=$(basename "$main_abs")
+parent=$(dirname "$main_abs")
+wt_base="${SWARMY_WORKTREE_BASE:-$parent}"
+
+wt_path="$wt_base/$base--$branch"
+
+# Remove the worktree (force: discards any leftover changes).
+if [ -d "$wt_path" ]; then
+    if ! git -C "$main_abs" worktree remove "$wt_path" --force >/dev/null 2>&1; then
+        echo "swarm-fold-cleanup: failed to remove worktree at $wt_path" >&2
+        exit 1
+    fi
+else
+    # Worktree dir already gone — still try to prune git's bookkeeping.
+    git -C "$main_abs" worktree prune >/dev/null 2>&1 || true
+fi
+
+# Delete the branch.
+if git -C "$main_abs" show-ref --verify --quiet "refs/heads/$branch"; then
+    if ! git -C "$main_abs" branch -D "$branch" >/dev/null 2>&1; then
+        echo "swarm-fold-cleanup: failed to delete branch '$branch'" >&2
+        exit 1
+    fi
+fi
+
+# Kill any tmux panes whose current path matches the removed worktree.
+if [ -n "${TMUX:-}" ]; then
+    # awk -v p=... matches exact path or any descendant (path/...).
+    pane_ids=$(tmux list-panes -a -F "#{pane_id} #{pane_current_path}" \
+        | awk -v p="$wt_path" '$2==p || index($2, p"/")==1 {print $1}') || pane_ids=""
+    if [ -n "$pane_ids" ]; then
+        # macOS xargs has no -r; use a read loop instead.
+        while IFS= read -r pid; do
+            [ -z "$pid" ] && continue
+            tmux kill-pane -t "$pid" 2>/dev/null || true
+        done <<EOF
+$pane_ids
+EOF
+    fi
+fi
+
+echo "Folded: removed $wt_path and branch '$branch'"
