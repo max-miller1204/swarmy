@@ -114,23 +114,29 @@ git -C "$main_abs" cherry-pick "${commit_args[@]}"
 rc=$?
 set -e
 
-if [ "$rc" -ne 0 ]; then
-    # Distinguish "real conflict" from "commits already applied" (an empty
-    # cherry-pick — happens when the user re-runs swarm-cherry-pick on a
-    # branch that's already been folded). On the empty path, git leaves
-    # CHERRY_PICK_HEAD set with no diff to resolve, which is confusing
-    # state to dump on the user. Auto-abort it and surface a clearer
-    # message; the working tree is left clean so the next run isn't
-    # blocked by the cleanliness check.
-    git_dir=$(git -C "$main_abs" rev-parse --git-dir 2>/dev/null)
+# Drive the sequencer to completion, --skipping commits that are
+# patch-equivalent to ones already on the integration branch. This handles
+# both the "single redundant commit" case (re-fold of a fully integrated
+# branch) and the "mixed" case where some commits are already on target but
+# later siblings are not — without the skip loop, a single empty commit at
+# the front of the list would silently drop the non-empty tail.
+#
+# Empty cherry-pick = CHERRY_PICK_HEAD set + no UU markers in porcelain.
+# Real conflict     = CHERRY_PICK_HEAD set + UU markers in porcelain.
+#
+# Use --absolute-git-dir so the check works regardless of the script's
+# CWD (e.g. invoked from a chunk worktree with no args).
+git_dir=$(git -C "$main_abs" rev-parse --absolute-git-dir 2>/dev/null)
+skipped=0
+while [ "$rc" -ne 0 ]; do
     if [ -n "$git_dir" ] && [ -e "$git_dir/CHERRY_PICK_HEAD" ] \
             && [ -z "$(git -C "$main_abs" status --porcelain --untracked-files=no)" ]; then
-        git -C "$main_abs" cherry-pick --abort >/dev/null 2>&1 || true
-        echo ""
-        echo "swarm-cherry-pick: commits from '$branch' are already on '$target' (empty cherry-pick)."
-        echo "  Aborted automatically. If you meant to fold a different branch, re-run with that branch name."
-        echo "  If '$branch' is fully folded, run swarm-fold-cleanup '$branch' to tear it down."
-        exit 0
+        skipped=$((skipped + 1))
+        set +e
+        git -C "$main_abs" cherry-pick --skip >/dev/null 2>&1
+        rc=$?
+        set -e
+        continue
     fi
     echo ""
     echo "swarm-cherry-pick: cherry-pick stopped. Resolve in $main_abs, then:"
@@ -138,6 +144,14 @@ if [ "$rc" -ne 0 ]; then
     echo "  git -C $main_abs cherry-pick --continue"
     echo "Or abort: git -C $main_abs cherry-pick --abort"
     exit "$rc"
-fi
+done
 
-echo "Cherry-picked into $main_abs"
+if [ "$skipped" -eq "$n" ]; then
+    echo ""
+    echo "swarm-cherry-pick: all $n commit(s) from '$branch' are already on '$target' (skipped)."
+    echo "  If '$branch' is fully folded, run swarm-fold-cleanup '$branch' to tear it down."
+elif [ "$skipped" -gt 0 ]; then
+    echo "Cherry-picked $((n - skipped)) commit(s); skipped $skipped already-applied into $main_abs"
+else
+    echo "Cherry-picked into $main_abs"
+fi
