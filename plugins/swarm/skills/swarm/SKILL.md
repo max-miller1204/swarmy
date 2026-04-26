@@ -146,7 +146,7 @@ So:
   ```
   bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-cherry-pick" <branch>
   # OR for uncommitted work:
-  # bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-apply" <branch> && git -C <main> add .
+  # bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-apply" <branch>
 
   bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-fold-cleanup" <branch>
   ```
