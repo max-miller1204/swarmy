@@ -8,6 +8,35 @@ Spec-and-swarm for Claude Code: write a wave-structured spec, then execute it in
 
 `/swarm` is the executor. It reads a spec, then has the coordinator (your current Claude session) write the scaffold and lock the interface contracts on trunk **before** any parallel work starts. Once the scaffold is committed, swarm dispatches each wave's leaf chunks to parallel Claude agents, one per chunk, each in its own git worktree and its own tmux pane. When chunks are done, swarm walks you through fold-back one branch at a time. Two delivery modes: **solo-local** (cherry-pick chunks straight onto trunk in your local repo) and **fork-pr** (each wave lands on its own branch, gets pushed to a fork, and is reviewed as a PR upstream).
 
+## How swarmy compares
+
+swarmy fills the gap between vanilla Claude AgentTeams primitives and heavy custom multi-agent orchestrators.
+
+|  | **swarmy** | **vanilla AgentTeams** | **other multi-agent orchestrators** |
+|---|---|---|---|
+| Engine | Current Claude session + bash scripts | `Agent({isolation: "worktree"})`, `SendMessage` | Custom Node/TS daemon, supervisor agent, or plugin scaffold |
+| Workers you can watch live | Yes — `tmux attach` to raw stdout | No — opaque, summary on return | Sometimes (web dashboard, SSE) |
+| Spec as durable artifact | `SPEC.md` with explicit waves | None | Per-task `PROMPT.md` |
+| Coordinator commits scaffold first | Yes — interface contracts locked before fan-out | DIY | No — every chunk is fungible parallel work |
+| Wave-by-wave history | Annotations appended to the spec | None | DIY or via dashboard |
+| Fold-back | Interactive walkthrough, conflict-stop | DIY | Auto-merge, sometimes with reviewer agents |
+| Hard deps | `git`, `tmux`, `claude`, `bash` 3.2+ | None extra | Often Node, custom runtime, dashboard server |
+| Distribution | Native Claude Code plugin | Built into Claude Code | Per-project scaffold or npm install |
+
+### vs vanilla Claude AgentTeams
+
+AgentTeams gives you primitives: `Agent({ isolation: "worktree" })`, `SendMessage`, `Monitor`. Subagents run *inside* the Claude Code harness, invisibly — you only see the summary they return. That's perfect for delegating one or two opaque sub-tasks.
+
+swarmy is the workflow layer on top: a spec format with explicit waves, locked interface contracts committed before dispatch, full `claude` CLI processes in tmux panes you can attach to live, and an interactive fold-back walkthrough. Workers survive the harness dying, and you can watch them think. AgentTeams answers *"how do I run another agent in isolation."* swarmy answers *"how do I parallelize a ten-chunk feature without the chunks stomping each other."*
+
+### vs other multi-agent orchestrators
+
+Most multi-agent orchestrators treat every piece of work as a fungible parallel chunk. The foundation that makes parallelism safe — locked trait signatures, agreed schemas, scaffolded module structure — either happens implicitly inside one parallel agent (where it gets stomped by siblings working from a different mental model), or as a manual pre-step you do outside the tool.
+
+swarmy formalizes that step. The coordinator writes and commits the scaffold *serially* in your current session before any agent fans out. Sub-agents read each other's signatures from the scaffold commit, not from a moving target. *Five agents implementing against a `trait Storage` that's already in the repo* is a fundamentally different problem from *five agents trying to agree on what `trait Storage` should look like.*
+
+No dashboard, no SSE, no background daemon to keep alive. Observability is `tmux attach`. State is git. If the orchestrator dies, the work doesn't.
+
 ## Why use this
 
 - **Spec-first.** The spec is a durable artifact, not throwaway context. You can hand it to a teammate, archive it, or feed it to other tooling — it isn't trapped inside one session.
@@ -16,8 +45,6 @@ Spec-and-swarm for Claude Code: write a wave-structured spec, then execute it in
 - **Real isolation.** Each chunk runs in its own git worktree and its own tmux pane. No shared working directory, no stomping, no "wait, who edited this?". Worktrees are sibling directories of your repo, easy to inspect, easy to throw away.
 - **Works on any Claude Code install.** No Node, no daemons, no custom orchestrator. Just `git`, `tmux`, the `claude` CLI, and bash. Installs through the native Claude Code plugin marketplace.
 - **Two plugins, install only what you need.** `/spec` has zero runtime deps and is useful standalone — write a spec, hand it off to anything. `/swarm` is the heavier piece; install it only if you want the executor.
-
-Compared to alternatives like orcha, orchas, taskplane-claude, or vanilla AgentTeams: those tend to be either heavier (custom orchestrators, daemons, dashboards) or thinner (a single agent prompt that hopes for the best). swarmy sits in the middle: durable spec, deterministic scaffold, real OS-level parallelism, human-driven fold-back.
 
 ## Prerequisites
 
