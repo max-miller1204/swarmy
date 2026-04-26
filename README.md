@@ -63,7 +63,12 @@ No dashboard, no SSE, no background daemon to keep alive. Observability is `tmux
 
 `/swarm` creates one git worktree per chunk, and **the worktrees live as sibling directories of your repo, NOT inside it.** A repo at `~/code/foo` with a chunk on branch `bar` produces a worktree at `~/code/foo--bar`. swarm needs write access to the parent directory of your repo for this to work.
 
-If your repo lives somewhere with a locked-down or shared parent (e.g. a workspace root), set `SWARMY_WORKTREE_BASE=/some/other/path` to redirect worktree creation to a directory you control. The `<repo-name>--<branch>` naming is preserved; only the parent changes.
+If your repo lives somewhere with a locked-down or shared parent (e.g. a workspace root), set `SWARMY_WORKTREE_BASE` to redirect worktree creation. Two forms:
+
+- **Absolute path** (`SWARMY_WORKTREE_BASE=/some/other/path`) — used verbatim. Worktrees land at `/some/other/path/<repo>--<branch>`.
+- **Relative path** (`SWARMY_WORKTREE_BASE=.swarmy/worktrees`) — resolved against your repo root. Worktrees land at `<repo>/.swarmy/worktrees/<repo>--<branch>`, i.e. **inside the repo**. Useful when you don't have write access to the parent dir. Add the base path to `.gitignore` so the main checkout doesn't see the nested copies as untracked, and be aware that ripgrep/IDE indexers will walk into the nested worktrees unless you configure them to skip the base path.
+
+The `<repo-name>--<branch>` naming is preserved in both cases; only the parent changes.
 
 ## Install
 
