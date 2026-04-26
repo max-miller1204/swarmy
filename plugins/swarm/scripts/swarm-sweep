@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# swarm-sweep — list (and optionally remove) all swarm worktrees.
+#
+# Parses `git worktree list --porcelain` and filters for paths whose
+# parent dir matches ${SWARMY_WORKTREE_BASE:-<parent-of-repo>} and whose
+# basename starts with `<repo>--`. The main worktree is always excluded.
+#
+# Without --confirm: prints one line per match `<path>\t<branch>` to
+# stdout and exits 0.
+# With --confirm: removes each matched worktree (--force), deletes its
+# branch (-D), and kills any tmux panes pointing at the removed path.
+#
+# Replaces the inlined `gwra` substitute pattern in the current /swarm
+# SKILL.
+#
+# Usage: swarm-sweep [--confirm]
+
+set -euo pipefail
+
+: "${CLAUDE_PLUGIN_ROOT:=$(cd "$(dirname "$0")/.." && pwd)}"
+
+usage() {
+    echo "Usage: swarm-sweep [--confirm]" >&2
+    exit 1
+}
+
+confirm=0
+case "${1:-}" in
+    "" ) ;;
+    --confirm) confirm=1 ;;
+    -h|--help) usage ;;
+    *) echo "swarm-sweep: unknown argument: $1" >&2; usage ;;
+esac
+
+common_dir_raw=$(git rev-parse --git-common-dir 2>/dev/null) || {
+    echo "swarm-sweep: not inside a git repository" >&2
+    exit 1
+}
+common_dir=$(cd "$common_dir_raw" && pwd -P)
+main_abs=$(cd "$common_dir/.." && pwd -P)
+base=$(basename "$main_abs")
+parent=$(dirname "$main_abs")
+wt_base="${SWARMY_WORKTREE_BASE:-$parent}"
+
+prefix="$wt_base/$base--"
+
+# Parse `git worktree list --porcelain`. Records are blank-line-separated;
+# each record has a `worktree <path>` line and a `branch refs/heads/<name>`
+# line (or `detached`).
+paths=()
+branches=()
+cur_path=""
+cur_branch=""
+
+flush() {
+    if [ -n "$cur_path" ]; then
+        # Match: cur_path begins with prefix AND is not the main worktree.
+        if [ "$cur_path" != "$main_abs" ] && [ "${cur_path#"$prefix"}" != "$cur_path" ]; then
+            paths+=("$cur_path")
+            branches+=("$cur_branch")
+        fi
+    fi
+    cur_path=""
+    cur_branch=""
+}
+
+while IFS= read -r line; do
+    if [ -z "$line" ]; then
+        flush
+        continue
+    fi
+    case "$line" in
+        worktree\ *)
+            cur_path="${line#worktree }"
+            ;;
+        branch\ refs/heads/*)
+            cur_branch="${line#branch refs/heads/}"
+            ;;
+        detached)
+            cur_branch=""
+            ;;
+    esac
+done <<EOF
+$(git -C "$main_abs" worktree list --porcelain)
+EOF
+flush
+
+if [ "${#paths[@]}" -eq 0 ]; then
+    if [ "$confirm" -eq 1 ]; then
+        echo "swarm-sweep: no swarm worktrees to remove."
+    fi
+    exit 0
+fi
+
+if [ "$confirm" -eq 0 ]; then
+    i=0
+    while [ "$i" -lt "${#paths[@]}" ]; do
+        printf '%s\t%s\n' "${paths[$i]}" "${branches[$i]}"
+        i=$((i + 1))
+    done
+    exit 0
+fi
+
+# --confirm: actually remove each match.
+fail=0
+i=0
+while [ "$i" -lt "${#paths[@]}" ]; do
+    p="${paths[$i]}"
+    b="${branches[$i]}"
+    i=$((i + 1))
+
+    if ! git -C "$main_abs" worktree remove "$p" --force >/dev/null 2>&1; then
+        echo "swarm-sweep: failed to remove worktree $p" >&2
+        fail=1
+        continue
+    fi
+
+    if [ -n "$b" ] && git -C "$main_abs" show-ref --verify --quiet "refs/heads/$b"; then
+        if ! git -C "$main_abs" branch -D "$b" >/dev/null 2>&1; then
+            echo "swarm-sweep: failed to delete branch '$b'" >&2
+            fail=1
+        fi
+    fi
+
+    # Kill any tmux panes still pointing at the removed worktree.
+    if [ -n "${TMUX:-}" ]; then
+        pane_ids=$(tmux list-panes -a -F "#{pane_id} #{pane_current_path}" \
+            | awk -v pp="$p" '$2==pp || index($2, pp"/")==1 {print $1}') || pane_ids=""
+        if [ -n "$pane_ids" ]; then
+            while IFS= read -r pid; do
+                [ -z "$pid" ] && continue
+                tmux kill-pane -t "$pid" 2>/dev/null || true
+            done <<EOF
+$pane_ids
+EOF
+        fi
+    fi
+
+    echo "Removed: $p (branch: ${b:-detached})"
+done
+
+if [ "$fail" -ne 0 ]; then
+    exit 1
+fi
