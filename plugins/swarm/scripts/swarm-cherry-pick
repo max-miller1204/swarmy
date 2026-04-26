@@ -115,6 +115,23 @@ rc=$?
 set -e
 
 if [ "$rc" -ne 0 ]; then
+    # Distinguish "real conflict" from "commits already applied" (an empty
+    # cherry-pick — happens when the user re-runs swarm-cherry-pick on a
+    # branch that's already been folded). On the empty path, git leaves
+    # CHERRY_PICK_HEAD set with no diff to resolve, which is confusing
+    # state to dump on the user. Auto-abort it and surface a clearer
+    # message; the working tree is left clean so the next run isn't
+    # blocked by the cleanliness check.
+    git_dir=$(git -C "$main_abs" rev-parse --git-dir 2>/dev/null)
+    if [ -n "$git_dir" ] && [ -e "$git_dir/CHERRY_PICK_HEAD" ] \
+            && [ -z "$(git -C "$main_abs" status --porcelain --untracked-files=no)" ]; then
+        git -C "$main_abs" cherry-pick --abort >/dev/null 2>&1 || true
+        echo ""
+        echo "swarm-cherry-pick: commits from '$branch' are already on '$target' (empty cherry-pick)."
+        echo "  Aborted automatically. If you meant to fold a different branch, re-run with that branch name."
+        echo "  If '$branch' is fully folded, run swarm-fold-cleanup '$branch' to tear it down."
+        exit 0
+    fi
     echo ""
     echo "swarm-cherry-pick: cherry-pick stopped. Resolve in $main_abs, then:"
     echo "  git -C $main_abs add <files>"

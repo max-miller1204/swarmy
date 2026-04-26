@@ -140,7 +140,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-apply" <branch>
 
 - Operates on the worktree at `<parent>/<repo>--<branch>`.
 - Runs `git diff HEAD | git apply --index -` against the main worktree, falling back to `--3way` on failure.
-- Copies untracked files into the main worktree.
+- Copies untracked files into the main worktree and stages them with `git add` (symmetric with the `--index` path used for tracked diffs — the main worktree's index always reflects the applied chunk).
 - **Only applies uncommitted work.** If the chunk branch has commits ahead of the integration branch, the script reports "Nothing to apply" — use `swarm-cherry-pick` for that case.
 
 **Conflict semantics:** the `--3way` fallback may leave conflict markers in the main worktree. The script exits non-zero. Surface the conflicted files, wait for manual resolution, do not continue.
