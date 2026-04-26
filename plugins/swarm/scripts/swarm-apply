@@ -81,13 +81,17 @@ if [ -n "$tracked_changes" ]; then
     fi
 fi
 
-# Copy untracked files.
+# Copy untracked files and stage them. Symmetric with the tracked-diff
+# path above (which uses `git apply --index`), so the main worktree's index
+# reflects the applied chunk regardless of whether each file was tracked
+# upstream.
 if [ -n "$untracked" ]; then
     while IFS= read -r f; do
         [ -z "$f" ] && continue
         dest="$main_abs/$f"
         mkdir -p "$(dirname "$dest")"
         cp "$source_abs/$f" "$dest"
+        git -C "$main_abs" add -- "$f"
     done <<EOF
 $untracked
 EOF

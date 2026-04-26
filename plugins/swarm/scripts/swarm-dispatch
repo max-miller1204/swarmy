@@ -104,9 +104,16 @@ for branch in "${branches[@]}"; do
     if [ ! -d "$wt_path" ]; then
         # First try to create with a new branch; if that fails (branch may
         # already exist), check out the existing branch into the worktree.
+        # Capture stderr from the fallback so the user gets git's diagnostic
+        # (e.g. "branch already used by worktree at …", "path is not empty")
+        # instead of a generic "failed to create worktree".
         if ! git -C "$main_abs" worktree add -b "$branch" "$wt_path" >/dev/null 2>&1; then
-            if ! git -C "$main_abs" worktree add "$wt_path" "$branch" >/dev/null 2>&1; then
+            err=$(git -C "$main_abs" worktree add "$wt_path" "$branch" 2>&1 >/dev/null) && rc=0 || rc=$?
+            if [ "$rc" -ne 0 ]; then
                 echo "swarm-dispatch: failed to create worktree for '$branch' at $wt_path" >&2
+                if [ -n "$err" ]; then
+                    printf '  git: %s\n' "$err" >&2
+                fi
                 exit 1
             fi
         fi
@@ -127,7 +134,7 @@ case "$mode" in
         while [ "$i" -lt "${#wt_paths[@]}" ]; do
             wt="${wt_paths[$i]}"
             new_pane=$(tmux split-window -h -t "$split_target" -c "$wt" -P -F "#{pane_id}")
-            echo "$new_pane"
+            echo "$new_pane $wt"
             if [ -z "$first_pane" ]; then
                 first_pane="$new_pane"
             fi
@@ -148,7 +155,7 @@ case "$mode" in
             # new window's initial pane. We surface that — callers (and the
             # SKILL prose) treat it as the addressable target for send-keys.
             new_id=$(tmux new-window -c "$wt" -n "$branch" -P -F "#{pane_id}")
-            echo "$new_id"
+            echo "$new_id $wt"
             i=$((i + 1))
         done
         ;;
