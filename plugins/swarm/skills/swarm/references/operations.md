@@ -70,9 +70,9 @@ Where `<pane_id>` is the tmux pane (or window) ID like `%17` or `@4`, and `<work
    ```
    tmux send-keys -t <pane_id> 'claude "read CHUNK.md and execute it"' C-m
    ```
-   Verify each pane got the command before moving to the next — don't loop in a way that races.
+   Send sequentially and verify each pane got the command (e.g. `tmux capture-pane -p -t <pane_id> | tail -n 5`) before moving to the next. `tmux send-keys` can silently no-op if a pane closed between dispatch and send — sequencing makes the failure visible instead of letting one chunk silently never start.
 
-This sequencing avoids the race where the agent starts before its `CHUNK.md` exists.
+This sequencing also avoids the race where the agent starts before its `CHUNK.md` exists.
 
 ## Fold-back operations
 
@@ -97,7 +97,21 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm-cherry-pick" <branch>
 - **No-op if the branch has no commits ahead of the integration branch.** Prints a hint pointing at `swarm-apply` in that case.
 - **Does not hardcode `main`** — it targets whatever branch the main worktree currently has checked out. So in fork mode, make sure the wave branch is checked out before invoking.
 
-**Conflict semantics:** cherry-pick stops with markers in the main worktree. The script exits non-zero. Surface the conflicted files to the user, wait for manual `git cherry-pick --continue` or `--abort`, do not advance to the next branch. Cargo.lock conflicts are common when parallel chunks each add deps; resolve by taking the integration branch's lock (`git checkout --ours Cargo.lock && git add Cargo.lock`), then run a build to regenerate, then `git add Cargo.lock && git cherry-pick --continue`.
+**Conflict semantics:** cherry-pick stops with markers in the main worktree. The script exits non-zero. Surface the conflicted files to the user, wait for manual `git cherry-pick --continue` or `--abort`, do not advance to the next branch.
+
+Lockfile conflicts are common when parallel chunks each add deps. **General recipe:** take the integration branch's lock (`git checkout --ours <lockfile> && git add <lockfile>`), regenerate by running the package manager's install or check command (so the new deps from the cherry-picked commit get re-resolved into the lock), then `git add <lockfile> && git cherry-pick --continue`. Common lockfiles and their regen commands:
+
+| Lockfile | Regen |
+| --- | --- |
+| `Cargo.lock` | `cargo check` (or `cargo check --workspace`) |
+| `package-lock.json` | `npm install` |
+| `pnpm-lock.yaml` | `pnpm install` |
+| `bun.lockb` / `bun.lock` | `bun install` |
+| `go.sum` | `go mod tidy` |
+| `uv.lock` | `uv lock` |
+| `poetry.lock` | `poetry lock --no-update` |
+| `Gemfile.lock` | `bundle install` |
+| `mix.lock` | `mix deps.get` |
 
 **Use when:** folding back a swarm chunk whose agent already committed (the default case).
 
