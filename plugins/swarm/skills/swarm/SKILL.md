@@ -24,6 +24,8 @@ Read `$1` if given, else `./SPEC.md`. If neither exists, tell the user to run `/
 Look for a **Waves** section in the spec.
 
 - **If waves are present** (the primary path): scan for any line matching `Wave N executed` (case-insensitive; surrounding underscores/italic markers optional, so a hand-edited annotation like `Wave 2 executed 2026-04-20: ...` still detects). Those waves are done. If exactly one wave remains un-executed, surface that choice in plain text and use it directly — no need to prompt for a single option. Otherwise offer the first un-executed wave via `AskUserQuestion`. Use the chosen wave's chunks and scaffold verbatim; do not re-chunk.
+
+  **Fork-mode landing gate** (skip in solo mode): for the most recent completed wave, determine whether its commits have landed on `<upstream>/<upstream-default-branch>`. Sources of truth, in order: (1) the annotation's `landed_on_main` field if present; (2) live check `git fetch <upstream> <upstream-default-branch> && git merge-base --is-ancestor <wave-branch> <upstream>/<upstream-default-branch>` if the branch still exists locally or on the fork; (3) if neither is conclusive (annotation legacy, branch deleted), ask the user. If the most recent completed wave has not landed, **stop**. Surface: the wave's PR may have merged into a stacked branch but its commits are not yet on `<upstream-default-branch>`, and the next wave will likely need them. Direct the user to either merge the existing trailing PR or open one (`gh pr create --base <upstream-default-branch> --head <wave-branch> --title "Land wave N onto <default-branch>"`). Don't proceed until resolved or the user explicitly overrides.
 - **If no waves section**: treat the spec as one wave. You'll need to analyze parallelizability yourself in the next phase.
 
 ### 1b — Resolve delivery mode
@@ -184,10 +186,16 @@ Append a one-line note to the spec file. The format depends on delivery mode:
   ```
   _Wave {{N}} executed {{YYYY-MM-DD}}: branches {{comma-separated list}}_
   ```
-- **fork**:
+- **fork**: First, check whether the wave's commits have landed on the upstream default branch. Run:
   ```
-  _Wave {{N}} executed {{YYYY-MM-DD}} on branch {{wave-branch}}; chunks {{list}}; PR {{url-or-"not pushed"}}_
+  git fetch <upstream> <upstream-default-branch>
+  git merge-base --is-ancestor <wave-tip-sha> <upstream>/<upstream-default-branch>
   ```
+  Exit 0 = landed; non-zero = not landed (the PR you opened in Phase 8.5 either targets a non-default branch, hasn't merged yet, or doesn't exist). Then write:
+  ```
+  _Wave {{N}} executed {{YYYY-MM-DD}} on branch {{wave-branch}}; chunks {{list}}; PR {{url-or-"not pushed"}}; landed_on_main: {{yes|no}}{{; trailing_pr: pending  (only when landed_on_main is no)}}_
+  ```
+  When `landed_on_main: no`, also surface this in plain text: the wave is annotated executed but its commits are not yet on `<upstream-default-branch>`, and a trailing `<wave-branch> → <upstream-default-branch>` PR must be opened and merged before the next wave is dispatched. Phase 1a's landing gate will block the next wave until this is resolved.
 
 Use today's date (from the environment context). This is per-run history — on the next `/swarm` invocation, this note is how you know which wave to offer next.
 
