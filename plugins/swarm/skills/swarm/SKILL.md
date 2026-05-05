@@ -24,6 +24,8 @@ Read `$1` if given, else `./SPEC.md`. If neither exists, tell the user to run `/
 Look for a **Waves** section in the spec.
 
 - **If waves are present** (the primary path): scan for any line matching `Wave N executed` (case-insensitive; surrounding underscores/italic markers optional, so a hand-edited annotation like `Wave 2 executed 2026-04-20: ...` still detects). Those waves are done. If exactly one wave remains un-executed, surface that choice in plain text and use it directly — no need to prompt for a single option. Otherwise offer the first un-executed wave via `AskUserQuestion`. Use the chosen wave's chunks and scaffold verbatim; do not re-chunk.
+
+  **Fork-mode landing gate** (skip in solo mode): for the most recent completed wave, determine whether its commits have landed on `<upstream>/<upstream-default-branch>`. Sources of truth, in order: (1) the annotation's `landed_on_main` field if present; (2) live check `git fetch <upstream> <upstream-default-branch> && git merge-base --is-ancestor <wave-branch> <upstream>/<upstream-default-branch>` if the branch still exists locally or on the fork; (3) if neither is conclusive (annotation legacy, branch deleted), ask the user. If the most recent completed wave has not landed, **stop**. Surface: the wave's PR may have merged into a stacked branch but its commits are not yet on `<upstream-default-branch>`, and the next wave will likely need them. Direct the user to either merge the existing trailing PR or open one (`gh pr create --base <upstream-default-branch> --head <wave-branch> --title "Land wave N onto <default-branch>"`). Don't proceed until resolved or the user explicitly overrides.
 - **If no waves section**: treat the spec as one wave. You'll need to analyze parallelizability yourself in the next phase.
 
 ### 1b — Resolve delivery mode
@@ -44,6 +46,13 @@ Then:
   - `fork` (wave branches; opt-in push/PR — see references/fork-mode.md)
 
   Hold the answer in memory for this run. **Don't write to the spec yet** — Phase 4 bundles the `## Execution` section update into the scaffold commit. Writing here would dirty the working tree right before Phase 3 verifies it's clean, and bail the run on the user's own well-meaning edit.
+
+Also parse `Dispatch:` from the same `## Execution` section, with the same tolerance rules:
+
+- `Dispatch: tmux` (default) — current behavior; spawn Claude CLI sessions in tmux panes via `swarm-dispatch`.
+- `Dispatch: agents` — experimental; use Claude Code's Agent fork feature with `isolation: "worktree"` instead of tmux. Replaces Phases 5–7 with the flow in `references/agents-dispatch.md`. Read that file now if this is the chosen mode.
+
+If `Dispatch:` is absent from `## Execution`, default to `tmux` silently — do not prompt. The default is backward-compatible with every spec written before this option existed. Only ask the user if they explicitly want to switch. If the user does choose `agents`, hold the answer in memory for this run (same pattern as the delivery-mode answer); Phase 4 bundles it into the spec write.
 
 The remaining phases are written in solo-mode terms with notes for fork mode. **Solo mode is byte-identical to the previous version of this skill.**
 
@@ -77,7 +86,7 @@ In fork mode, the next step is Phase 3.5 (create the wave branch) before scaffol
 You (the coordinator) write the scaffold files yourself. The other agents aren't running yet — this is all you.
 
 - Write the workspace/package manifest, shared types, interface contracts, stub modules for each chunk, CI.
-- If Phase 1b resolved a delivery mode that wasn't already in the spec, append a minimal `## Execution` section to the spec now. Place it just before the first existing `##` section (typically `## Waves`); if the spec has only an H1 and no other `##` headers, append at the end.
+- If Phase 1b resolved any `## Execution` keys that weren't already in the spec (delivery mode, dispatch, or both), append or extend a minimal `## Execution` section to the spec now. Write each resolved key on its own line (`Delivery mode: <answer>`, `Dispatch: <answer>`). Place the section just before the first existing `##` section (typically `## Waves`); if the spec has only an H1 and no other `##` headers, append at the end. Skip writing any key that defaulted silently (e.g. `Dispatch: tmux` when never prompted).
 - Run the stack's standard build or typecheck command — whatever's fast enough to fail on a broken scaffold (`cargo check`, `tsc --noEmit`, `go build ./...`, `mypy`/`pyright`, `mvn compile -q`, `bun run typecheck`, etc.). **Do not proceed if it fails.** Fix and re-check.
 - Commit everything (scaffold + the spec's new Execution section, if any) in a single commit with a message describing what contracts were locked. Example: `scaffold: lock SttEngine + LlmProvider + Recorder + … contracts`.
 
@@ -86,6 +95,8 @@ The scaffold commit lands on the integration branch — trunk in solo mode, the 
 In fork mode, this means trunk is **not** modified — it stays at upstream's HEAD until the PR merges upstream.
 
 ## Phase 5 — Preconditions for dispatch
+
+**If `Dispatch: agents` was resolved in Phase 1b, stop reading here and follow `references/agents-dispatch.md` for Phases 5–7. Resume this file at Phase 8.** The rest of this section is the `Dispatch: tmux` (default) flow.
 
 Verify:
 - `$TMUX` is set (inside a tmux session)
@@ -123,9 +134,53 @@ Three-step dispatch, in this order (avoids a race where Claude starts before its
 
 Report the pane/window IDs and worktree paths so the user can navigate.
 
-## Phase 7 — Hand off
+## Phase 7 — Watch for completion
 
-Do not poll. Do not wake up and check on agents. The user watches the panes and tells you when chunks are done. If the user asks you to check in on a specific chunk, you can inspect its worktree via `Read`/`Bash` — but don't steer the sub-agent unless asked.
+Each chunk agent writes `<worktree>/.swarm-done` when it finishes (per the CHUNK.md template), or `<worktree>/.swarm-blocker` if it stops on a blocker. The coordinator uses `Monitor` to stream these as they appear — no manual polling, no waking up to check.
+
+Build the watcher from the worktree paths you already know (from Phase 6's stdout). For each branch, the path is `<parent>/<repo>--<branch>`. Then arm a single `Monitor` call:
+
+```bash
+PATHS=(
+  "<parent>/<repo>--<branch1>"
+  "<parent>/<repo>--<branch2>"
+  ...
+)
+
+remaining=("${PATHS[@]}")
+while (( ${#remaining[@]} > 0 )); do
+  next=()
+  for p in "${remaining[@]}"; do
+    if [ -f "$p/.swarm-done" ]; then
+      echo "DONE: $p"
+    elif [ -f "$p/.swarm-blocker" ]; then
+      echo "BLOCKED: $p — $(head -1 "$p/.swarm-blocker")"
+    elif [ ! -d "$p" ]; then
+      echo "MISSING: $p (worktree disappeared)"
+    else
+      next+=("$p")
+    fi
+  done
+  remaining=("${next[@]}")
+  (( ${#remaining[@]} > 0 )) && sleep 5
+done
+echo "ALL_DONE"
+```
+
+Call `Monitor` with this command and a description like "swarm wave N completion". You'll get one notification per chunk as it transitions, and `ALL_DONE` when the wave is finished.
+
+**Pick the deadline based on the longest chunk in the wave:**
+
+- **Default (≤1h expected):** `timeout_ms: 3600000`, `persistent: false`. The 1h cap is a backstop — if every chunk hangs silently, you still get woken up to surface it.
+- **Long-running (model training, large dataset processing, multi-hour builds, anything open-ended):** `persistent: true`. `Monitor`'s max `timeout_ms` is 3600000, so anything longer than an hour must use persistent mode. The watcher still exits cleanly on `ALL_DONE`; persistent only matters if the script never exits on its own (i.e. some chunk hangs without writing a sentinel). If the user abandons the wave, `TaskStop` the monitor.
+
+If you're not sure which bucket the wave falls into, ask the user once via `AskUserQuestion` ("Longest expected chunk runtime: under 1h / over 1h?") rather than guessing — the cost of a bad guess is either a premature timeout or a watcher that needs manual `TaskStop`.
+
+**Coverage caveat.** Silence is not success. A chunk agent can hang or hit an internal error without writing either sentinel — the watcher will stay silent for that path. The user is still watching the panes for visible failures; if they say "kill chunk X, it's stuck", drop X from the watcher (restart Monitor with X removed from `PATHS`, or just `touch <X-path>/.swarm-done` to satisfy it) and proceed.
+
+If `MISSING` or `BLOCKED` fires, surface it to the user immediately — don't wait for `ALL_DONE`. They decide whether to fold the partial branch, retry, or abandon.
+
+If the user explicitly tells you a chunk is done before its sentinel arrives (e.g. they're folding manually), that overrides the watcher — proceed with Phase 8 for that branch and let the watcher continue for the rest. You may still inspect a worktree on user request, but do not steer sub-agents.
 
 ## Phase 8 — Fold back
 
@@ -184,10 +239,16 @@ Append a one-line note to the spec file. The format depends on delivery mode:
   ```
   _Wave {{N}} executed {{YYYY-MM-DD}}: branches {{comma-separated list}}_
   ```
-- **fork**:
+- **fork**: First, check whether the wave's commits have landed on the upstream default branch. Run:
   ```
-  _Wave {{N}} executed {{YYYY-MM-DD}} on branch {{wave-branch}}; chunks {{list}}; PR {{url-or-"not pushed"}}_
+  git fetch <upstream> <upstream-default-branch>
+  git merge-base --is-ancestor <wave-tip-sha> <upstream>/<upstream-default-branch>
   ```
+  Exit 0 = landed; non-zero = not landed (the PR you opened in Phase 8.5 either targets a non-default branch, hasn't merged yet, or doesn't exist). Then write:
+  ```
+  _Wave {{N}} executed {{YYYY-MM-DD}} on branch {{wave-branch}}; chunks {{list}}; PR {{url-or-"not pushed"}}; landed_on_main: {{yes|no}}{{; trailing_pr: pending  (only when landed_on_main is no)}}_
+  ```
+  When `landed_on_main: no`, also surface this in plain text: the wave is annotated executed but its commits are not yet on `<upstream-default-branch>`, and a trailing `<wave-branch> → <upstream-default-branch>` PR must be opened and merged before the next wave is dispatched. Phase 1a's landing gate will block the next wave until this is resolved.
 
 Use today's date (from the environment context). This is per-run history — on the next `/swarm` invocation, this note is how you know which wave to offer next.
 
