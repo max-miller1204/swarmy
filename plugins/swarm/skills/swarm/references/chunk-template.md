@@ -19,7 +19,9 @@ Changing these breaks sibling chunks. If you think the interface is wrong, stop 
 - [ ] {{criterion — ideally a smoke test command the user can run}}
 - [ ] {{criterion}}
 
-Tick each box when satisfied. When all are ticked, tell the user you're done and wait.
+Tick each box when satisfied. When all are ticked, run `touch .swarm-done` in this worktree's root, then tell the user you're done and wait. The `.swarm-done` file is how the coordinator session knows your branch is ready to fold — without it, the coordinator's watcher will keep waiting on you.
+
+If you stop because of a blocker (not because you finished), do **not** write `.swarm-done`. Instead, write `.swarm-blocker` containing a one-line description of the blocker, then tell the user. The coordinator's watcher distinguishes these.
 
 ## Out of scope
 {{what NOT to touch — explicit list of files/areas owned by other chunks}}
